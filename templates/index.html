@@ -4,6 +4,10 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>ACIInfotech - AI Assistant</title>
+
+  <!-- Favicon to prevent /favicon.ico 404 -->
+  <link rel="icon" href="{{ url_for('static', filename='favicon.ico') }}">
+
   <style>
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -157,46 +161,7 @@
   </div>
 
   <script>
-    let mediaRecorder; let audioChunks = [];
-    const micButton = document.getElementById('micButton');
-
-    if (micButton) {
-      micButton.addEventListener('click', async () => {
-        if (!isChatReady) { showStatus("Assistant not ready. Upload documents first.", 'error'); return; }
-        try {
-          const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-          mediaRecorder = new MediaRecorder(stream); audioChunks = [];
-          mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
-          mediaRecorder.onstop = async () => {
-            const blob = new Blob(audioChunks, { type: 'audio/webm' });
-            const formData = new FormData();
-            formData.append('audio', blob, 'voice.webm'); formData.append('session_id', sessionId);
-            showTypingIndicator(); disableChat();
-            try {
-              const response = await fetch('/chat_voice', { method: 'POST', body: formData });
-              const data = await response.json(); hideTypingIndicator();
-              if (response.ok) {
-                if (data.transcript) addMessageToChat(createMessageElement(true, data.transcript));
-                if (data.response) addMessageToChat(createMessageElement(false, data.response));
-                if (data.audio_url) new Audio(data.audio_url).play();
-              } else {
-                addMessageToChat(createMessageElement(false, data.error || "Voice error occurred."));
-              }
-            } catch (err) {
-              hideTypingIndicator(); console.error("Voice error:", err);
-              addMessageToChat(createMessageElement(false, `Voice error: ${err.message}`));
-            } finally { if (isChatReady) enableChat(); chatInput.focus(); }
-          };
-          mediaRecorder.start(); showStatus("Recording... Speak now", "info");
-          setTimeout(() => { mediaRecorder.stop(); stream.getTracks().forEach(t=>t.stop()); }, 5000);
-        } catch (err) {
-          console.error("Mic error:", err); showStatus("Microphone access denied or unavailable.", "error");
-        }
-      });
-    }
-  </script>
-
-  <script>
+    // ---------- GLOBAL STATE ----------
     const chatInput = document.getElementById('chatInput');
     const sendButton = document.getElementById('sendButton');
     const fileInput = document.getElementById('fileInput');
@@ -204,14 +169,15 @@
     const selectedFilesDiv = document.getElementById('selectedFiles');
     const statusIndicator = document.getElementById('statusIndicator');
     const chatMessagesContainer = document.getElementById('chatMessages');
+    const micButton = document.getElementById('micButton');
 
     let sessionId = null;
     let isChatReady = false;
     let typingIndicatorMessageElement = null;
 
-    // --- Markdown helpers ---
+    // ---------- MARKDOWN ----------
     function renderMarkdownToHTML(md) {
-      const raw = (window.marked ? marked.parse(md) : md);
+      const raw = (window.marked ? marked.parse(md, { breaks: true }) : md);
       return window.DOMPurify ? DOMPurify.sanitize(raw) : raw;
     }
     function getDriveFileIdFromHref(href) {
@@ -233,27 +199,32 @@
       });
     }
 
+    // ---------- INIT ----------
     async function initializeAssistant() {
       chatInput.placeholder = "Connecting to assistant...";
       try {
-        const sessionResponse = await fetch('/generate_session', { method: 'GET' });
+        const sessionResponse = await fetch('/generate_session');
         if (!sessionResponse.ok) throw new Error(`Session failed: ${sessionResponse.status}`);
-        const sessionData = await sessionResponse.json(); sessionId = sessionData.session_id;
+        const sessionData = await sessionResponse.json();
+        sessionId = sessionData.session_id;
 
-        const healthResponse = await fetch('/health', { method: 'GET' });
+        const healthResponse = await fetch('/health');
         if (!healthResponse.ok) throw new Error(`Health check failed: ${healthResponse.status}`);
         const healthData = await healthResponse.json();
 
         if (healthData.status === 'healthy') {
-          isChatReady = true; enableChat();
+          isChatReady = true;
+          enableChat();
           const docCount = healthData.documents_indexed || 0;
           showStatus(`Assistant ready! ${docCount} document chunks indexed.`, 'success');
         } else {
-          isChatReady = false; disableChat();
+          isChatReady = false;
+          disableChat();
           showStatus('Assistant unavailable. Please upload documents or refresh.', 'error');
         }
       } catch (error) {
-        console.error('Init error:', error); disableChat();
+        console.error('Init error:', error);
+        disableChat();
         showStatus(`Init failed: ${error.message}. Refresh page.`, 'error');
       }
     }
@@ -268,9 +239,10 @@
       setTimeout(()=>{ if (statusIndicator.textContent===message) statusIndicator.style.display='none'; }, 7000);
     }
 
+    // ---------- FILE UPLOAD ----------
     fileInput.addEventListener('change', function(e){
       const files = Array.from(e.target.files).filter(file =>
-        file.name.toLowerCase().endsWith('.pdf') || file.name.toLowerCase().endsWith('.txt')
+        /\.pdf$/i.test(file.name) || /\.txt$/i.test(file.name)
       );
       selectedFilesDiv.textContent = files.length
         ? `${files.length} file(s): ${files.map(f=>f.name).join(', ').substring(0,50)}...`
@@ -285,10 +257,11 @@
       showStatus('Uploading and processing documents...', 'info');
       try{
         const response = await fetch('/upload_documents', { method:'POST', body: formData });
-        const result = await response.json();
+        const result = await response.json().catch(()=>({ error: 'Invalid JSON' }));
         if (response.ok){
           showStatus(result.message || 'Documents processed!', 'success');
           isChatReady = true; enableChat();
+          // refresh counters
           const healthResponse = await fetch('/health'); const healthData = await healthResponse.json();
           const docCount = healthData.documents_indexed || 0;
           showStatus(`Processed! ${docCount} chunks indexed.`, 'success');
@@ -305,6 +278,7 @@
       }
     });
 
+    // ---------- CHAT RENDER ----------
     function createMessageElement(isUser=false, content=null, imageData=null, viewData=null){
       const messageDiv = document.createElement('div');
       messageDiv.className = `message ${isUser ? 'user' : 'assistant'}`;
@@ -318,7 +292,6 @@
       contentDiv.className = 'message-content';
       contentDiv.setAttribute('role','log');
 
-      // Images (unchanged)
       if (imageData && (imageData.text || imageData.image)) {
         if (imageData.text) {
           const textParagraph = document.createElement('p');
@@ -334,7 +307,6 @@
           link.appendChild(img); contentDiv.appendChild(link);
         }
       }
-      // Button views (unchanged)
       else if (viewData && viewData.text && Array.isArray(viewData.views)) {
         const textParagraph = document.createElement('p'); textParagraph.textContent = viewData.text; contentDiv.appendChild(textParagraph);
         viewData.views.forEach(view=>{
@@ -350,12 +322,10 @@
           }
         });
       }
-      // Markdown content (NEW)
       else if (content) {
         contentDiv.innerHTML = renderMarkdownToHTML(content);
         injectDriveThumbnails(contentDiv);
       }
-      // Fallback
       else {
         const p = document.createElement('p'); p.textContent = '...'; contentDiv.appendChild(p);
       }
@@ -382,12 +352,13 @@
       typingIndicatorMessageElement.className = 'message assistant typing-indicator';
       const avatarDiv = document.createElement('div'); avatarDiv.className='message-avatar'; avatarDiv.textContent='ACI'; avatarDiv.setAttribute('aria-hidden','true');
       const contentDiv = document.createElement('div'); contentDiv.className='message-content';
-      ['typing-dot','typing-dot','typing-dot'].forEach((c,i)=>{ const dot=document.createElement('div'); dot.className=c; dot.style.animationDelay=`${i*-0.16}s`; contentDiv.appendChild(dot); });
+      ['typing-dot','typing-dot','typing-dot'].forEach((c,i)=>{ const dot=document.createElement('div'); dot.className=c; dot.style.width='8px'; dot.style.height='8px'; dot.style.borderRadius='50%'; dot.style.background='#667eea'; dot.style.marginRight='6px'; dot.style.animation='typing 1.4s infinite ease-in-out'; dot.style.animationDelay=`${i*-0.16}s`; contentDiv.appendChild(dot); });
       typingIndicatorMessageElement.appendChild(avatarDiv); typingIndicatorMessageElement.appendChild(contentDiv);
       addMessageToChat(typingIndicatorMessageElement);
     }
     function hideTypingIndicator(){ if (typingIndicatorMessageElement){ typingIndicatorMessageElement.remove(); typingIndicatorMessageElement=null; } }
 
+    // ---------- CHAT SEND ----------
     async function sendMessage(){
       const messageText = chatInput.value.trim(); if (!messageText) return;
       if (!isChatReady){ showStatus("Assistant not ready. Upload documents or wait.", 'error'); return; }
@@ -401,7 +372,7 @@
           body: JSON.stringify({ message: messageText, session_id: sessionId })
         });
         hideTypingIndicator();
-        const data = await response.json();
+        const data = await response.json().catch(()=>({ error:'Invalid JSON' }));
 
         if (response.ok) {
           if (data.type === 'image_link' && data.image) {
@@ -442,6 +413,51 @@
       if (e.key === 'Enter' && !e.shiftKey){ e.preventDefault(); sendMessage(); }
     });
 
+    // ---------- VOICE (merged here so state exists) ----------
+    let mediaRecorder; let audioChunks = [];
+    micButton.addEventListener('click', async () => {
+      if (!isChatReady) { showStatus("Assistant not ready. Upload documents first.", 'error'); return; }
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showStatus("Microphone not supported in this browser.", "error"); return;
+      }
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        mediaRecorder = new MediaRecorder(stream, { mimeType: 'audio/webm' });
+        audioChunks = [];
+        mediaRecorder.ondataavailable = e => { if (e.data.size > 0) audioChunks.push(e.data); };
+        mediaRecorder.onstop = async () => {
+          const blob = new Blob(audioChunks, { type: 'audio/webm' });
+          const formData = new FormData();
+          formData.append('audio', blob, 'voice.webm'); formData.append('session_id', sessionId);
+          showTypingIndicator(); disableChat();
+          try {
+            const response = await fetch('/chat_voice', { method: 'POST', body: formData });
+            const data = await response.json().catch(()=>({ error: 'Invalid JSON' }));
+            hideTypingIndicator();
+            if (response.ok) {
+              if (data.transcript) addMessageToChat(createMessageElement(true, data.transcript));
+              if (data.response)  addMessageToChat(createMessageElement(false, data.response));
+              if (data.audio_url) new Audio(data.audio_url).play();
+            } else {
+              addMessageToChat(createMessageElement(false, data.error || "Voice error occurred."));
+            }
+          } catch (err) {
+            hideTypingIndicator(); console.error("Voice error:", err);
+            addMessageToChat(createMessageElement(false, `Voice error: ${err.message}`));
+          } finally {
+            stream.getTracks().forEach(t=>t.stop());
+            if (isChatReady) enableChat(); chatInput.focus();
+          }
+        };
+        mediaRecorder.start();
+        showStatus("Recording... Speak now (5s)", "info");
+        setTimeout(() => { if (mediaRecorder && mediaRecorder.state === 'recording') mediaRecorder.stop(); }, 5000);
+      } catch (err) {
+        console.error("Mic error:", err); showStatus("Microphone access denied or unavailable.", "error");
+      }
+    });
+
+    // ---------- BOOT ----------
     document.addEventListener('DOMContentLoaded', initializeAssistant);
   </script>
 </body>
