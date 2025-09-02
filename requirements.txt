@@ -15,6 +15,13 @@ langchain-mongodb
 # --- OpenAI client ---
 openai
 
+Flask
+gunicorn
+pymongo==4.14.1
+dnspython>=2.4.2   # needed if your Mongo URI is mongodb+srv://
+python-dotenv
+            
+
 
 
 # --- MongoDB + SRV (Atlas) ---
