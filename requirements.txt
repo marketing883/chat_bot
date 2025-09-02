@@ -1,0 +1,32 @@
+# --- Web app ---
+Flask
+flask-cors
+python-dotenv
+
+# --- PDF parsing ---
+pypdf
+
+# --- LangChain stack (keep these minimal to avoid resolver conflicts) ---
+langchain
+langchain-openai
+langchain_community
+langchain-mongodb
+
+# --- OpenAI client ---
+openai
+
+
+
+# --- MongoDB + SRV (Atlas) ---
+pymongo[srv]
+dnspython
+
+# --- Utilities ---
+requests
+pytz
+
+dateparser
+phonenumbers
+email-validator
+
+
